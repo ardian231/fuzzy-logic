@@ -1,0 +1,7 @@
+Flask
+firebase-admin
+scikit-learn
+pandas
+pytesseract
+pillow
+requests
