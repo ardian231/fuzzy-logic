@@ -1,0 +1,12 @@
+# ❌ file sensitif
+firebase-key.json
+
+# lingkungan & cache
+__pycache__/
+.env
+*.log
+
+# editor/OS
+.vscode/
+*.swp
+.DS_Store
