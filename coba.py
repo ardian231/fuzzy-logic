@@ -85,17 +85,64 @@ def ekstrak_usia_dari_ktp(img_bytes):
         print("OCR Error:", e)
     return None
 
-def rekomendasi_tenor(gaji, plafon=None, bunga_tahunan=0.07):
-    bunga_bulanan = bunga_tahunan / 12
-    tenor_list = [12, 24, 36, 48, 60]
-    for tenor in tenor_list:
-        if plafon:
-            cicilan = (plafon * bunga_bulanan) / (1 - (1 + bunga_bulanan) ** -tenor)
-        else:
-            cicilan = 0.2 * gaji
-        if cicilan <= 0.3 * gaji:
-            return tenor
-    return tenor_list[-1]
+def rekomendasi_tenor(gaji, plafon=None):
+    if gaji <= 0 or plafon is None or plafon <= 0:
+        return 12  # fallback default
+
+    ratio = plafon / gaji
+
+    # Membership Gaji
+    if gaji <= 3_000_000:
+        gaji_rendah = 1
+        gaji_sedang = 0
+        gaji_tinggi = 0
+    elif gaji <= 6_000_000:
+        gaji_rendah = (6_000_000 - gaji) / 3_000_000
+        gaji_sedang = (gaji - 3_000_000) / 3_000_000
+        gaji_tinggi = 0
+    elif gaji <= 9_000_000:
+        gaji_rendah = 0
+        gaji_sedang = (9_000_000 - gaji) / 3_000_000
+        gaji_tinggi = (gaji - 6_000_000) / 3_000_000
+    else:
+        gaji_rendah = 0
+        gaji_sedang = 0
+        gaji_tinggi = 1
+
+    # Membership Ratio
+    if ratio <= 0.2:
+        ratio_kecil = 1
+        ratio_sedang = 0
+        ratio_besar = 0
+    elif ratio <= 0.4:
+        ratio_kecil = (0.4 - ratio) / 0.2
+        ratio_sedang = (ratio - 0.2) / 0.2
+        ratio_besar = 0
+    elif ratio <= 0.6:
+        ratio_kecil = 0
+        ratio_sedang = (0.6 - ratio) / 0.2
+        ratio_besar = (ratio - 0.4) / 0.2
+    else:
+        ratio_kecil = 0
+        ratio_sedang = 0
+        ratio_besar = 1
+
+    # Aturan Sugeno
+    rules = [
+        (min(gaji_rendah, ratio_besar), 12),
+        (min(gaji_rendah, ratio_sedang), 18),
+        (min(gaji_rendah, ratio_kecil), 24),
+        (min(gaji_sedang, ratio_besar), 18),
+        (min(gaji_sedang, ratio_sedang), 24),
+        (min(gaji_sedang, ratio_kecil), 36),
+        (min(gaji_tinggi, ratio_besar), 24),
+        (min(gaji_tinggi, ratio_sedang), 36),
+        (min(gaji_tinggi, ratio_kecil), 48)
+    ]
+
+    numerator = sum(w * z for w, z in rules)
+    denominator = sum(w for w, _ in rules)
+    return round(numerator / denominator) if denominator > 0 else 12
 
 # ===================== ATURAN & PENILAIAN =====================
 def aturan_keras(data):
