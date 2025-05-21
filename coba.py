@@ -127,7 +127,7 @@ def rekomendasi_tenor(gaji, plafon=None):
         ratio_sedang = 0
         ratio_besar = 1
 
-    # Aturan Sugeno
+    # Aturan Sugeno: (bobot, nilai_tenor)
     rules = [
         (min(gaji_rendah, ratio_besar), 12),
         (min(gaji_rendah, ratio_sedang), 18),
@@ -140,9 +140,17 @@ def rekomendasi_tenor(gaji, plafon=None):
         (min(gaji_tinggi, ratio_kecil), 48)
     ]
 
-    numerator = sum(w * z for w, z in rules)
-    denominator = sum(w for w, _ in rules)
-    return round(numerator / denominator) if denominator > 0 else 12
+    numerator = sum(weight * output for weight, output in rules)
+    denominator = sum(weight for weight, _ in rules)
+
+    if denominator == 0:
+        return 12  # fallback jika semua keanggotaan nol
+
+    hasil = numerator / denominator
+    tenor_tersedia = [12, 18, 24, 36, 48]
+    tenor_terdekat = min(tenor_tersedia, key=lambda x: abs(x - hasil))
+    return tenor_terdekat
+
 
 # ===================== ATURAN & PENILAIAN =====================
 def aturan_keras(data):
@@ -239,7 +247,18 @@ def run_fuzzy():
 
     processed = 0
     for doc_id, record in data.items():
-        if record.get("status") == "processed":
+        status = record.get("status", "").lower()
+
+        if status == "processed":
+            # Sudah selesai, skip
+            continue
+        if status == "cancel":
+            # Data dibatalkan, skip juga
+            print(f"[INFO] Record {doc_id} dibatalkan, dilewati.")
+            continue
+        if status == "process":
+            # Sedang diproses, skip atau bisa kamu sesuaikan
+            print(f"[INFO] Record {doc_id} sedang diproses, dilewati.")
             continue
 
         record['tinggal_di_kost'] = False
