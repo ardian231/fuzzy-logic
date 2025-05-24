@@ -221,6 +221,11 @@ def evaluasi_akhir(data):
     }
 
 # ===================== FLASK API =====================
+
+@app.route("/")
+def home():
+    return "API prediksi kelayakan pembiayaan berjalan."
+
 @app.route("/prediksi", methods=["POST"])
 def prediksi():
     input_data = request.form.to_dict()
