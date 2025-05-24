@@ -8,47 +8,22 @@ const db = admin.firestore();
 exports.prediksiDariRealtimeKeFirestore = functions.database
   .ref('/orders/{orderId}')
   .onCreate(async (snapshot, context) => {
-    const data = snapshot.val();
     const orderId = context.params.orderId;
 
     try {
-      // Cek apakah hasil prediksi sudah ada di Firestore
+      // Cek dulu apakah hasil prediksi sudah ada di Firestore
       const hasilRef = db.collection('hasil_prediksi').doc(orderId);
       const existing = await hasilRef.get();
+
       if (existing.exists) {
         console.log(`[SKIP] Prediksi sudah ada untuk orderId: ${orderId}`);
-        return null;
+        return null; // skip
       }
 
-      // Siapkan form data
-      const formData = new URLSearchParams();
-      formData.append('gaji', data.income || '');
-      formData.append('cicilan_lain', data.installment || '');
-      formData.append('pengajuan_baru', data.nominal || '');
-      formData.append('pekerjaan', data.job || '');
-      formData.append('item', data.item || '');
-      formData.append('usia', data.usia || '30');
-      formData.append('tinggal_di_kost', 'tidak');
+      // Jika belum ada, panggil API Flask tanpa payload data
+      const response = await axios.get(`https://fuzzy-logic-q56h.onrender.com/run_fuzzy?orderId=${orderId}`);
 
-      // Panggil API Flask
-      const response = await axios.post(
-        'https://your-flask-api-url/prediksi',
-        formData.toString(),
-        {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-          }
-        }
-      );
-
-      // Simpan hasil prediksi
-      await hasilRef.set({
-        ...response.data,
-        original_order: data,
-        timestamp: admin.firestore.FieldValue.serverTimestamp()
-      });
-
-      console.log(`[SUCCESS] Prediksi disimpan di Firestore untuk orderId: ${orderId}`);
+      console.log(`[SUCCESS] Prediksi diproses oleh Flask untuk orderId: ${orderId}`, response.data);
     } catch (error) {
       console.error(`[ERROR] Gagal memproses prediksi untuk orderId: ${orderId}`, {
         message: error.message,
