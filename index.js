@@ -21,7 +21,7 @@ exports.prediksiDariRealtimeKeFirestore = functions.database
       }
 
       // Jika belum ada, panggil API Flask tanpa payload data
-      const response = await axios.get(`https://fuzzy-logic-q56h.onrender.com/run_fuzzy?orderId=${orderId}`);
+      const response = await axios.get(`https://fuzzy-logic-q56h.onrender.com/run_fuzzy`);
 
       console.log(`[SUCCESS] Prediksi diproses oleh Flask untuk orderId: ${orderId}`, response.data);
     } catch (error) {
