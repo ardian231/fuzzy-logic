@@ -12,7 +12,15 @@ exports.prediksiDariRealtimeKeFirestore = functions.database
     const orderId = context.params.orderId;
 
     try {
-      // Siapkan data form untuk POST ke API Flask
+      // Cek apakah hasil prediksi sudah ada di Firestore
+      const hasilRef = db.collection('hasil_prediksi').doc(orderId);
+      const existing = await hasilRef.get();
+      if (existing.exists) {
+        console.log(`[SKIP] Prediksi sudah ada untuk orderId: ${orderId}`);
+        return null;
+      }
+
+      // Siapkan form data
       const formData = new URLSearchParams();
       formData.append('gaji', data.income || '');
       formData.append('cicilan_lain', data.installment || '');
@@ -22,18 +30,29 @@ exports.prediksiDariRealtimeKeFirestore = functions.database
       formData.append('usia', data.usia || '30');
       formData.append('tinggal_di_kost', 'tidak');
 
-      // Panggil API prediksi Flask
-      const response = await axios.post('https://your-flask-api-url/prediksi', formData);
+      // Panggil API Flask
+      const response = await axios.post(
+        'https://your-flask-api-url/prediksi',
+        formData.toString(),
+        {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded'
+          }
+        }
+      );
 
-      // Simpan hasil prediksi ke Firestore, collection "hasil_prediksi"
-      await db.collection('hasil_prediksi').doc(orderId).set({
+      // Simpan hasil prediksi
+      await hasilRef.set({
         ...response.data,
-        original_order: data,   // optional, simpan data asli juga
+        original_order: data,
         timestamp: admin.firestore.FieldValue.serverTimestamp()
       });
 
-      console.log(`[SUCCESS] Hasil prediksi tersimpan di Firestore untuk orderId: ${orderId}`);
+      console.log(`[SUCCESS] Prediksi disimpan di Firestore untuk orderId: ${orderId}`);
     } catch (error) {
-      console.error(`[ERROR] Gagal proses prediksi untuk orderId: ${orderId}`, error);
+      console.error(`[ERROR] Gagal memproses prediksi untuk orderId: ${orderId}`, {
+        message: error.message,
+        response: error.response?.data,
+      });
     }
   });

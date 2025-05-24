@@ -2,3 +2,4 @@ firebase-admin
 pandas
 scikit-learn
 Flask
+gunicorn
