@@ -151,6 +151,16 @@ def rekomendasi_tenor(gaji, plafon=None):
     tenor_terdekat = min(tenor_tersedia, key=lambda x: abs(x - hasil))
     return tenor_terdekat
 
+def kategori_risiko(skor):
+    return "RENDAH" if skor >= 75 else "SEDANG" if skor >= 60 else "TINGGI"
+
+def saran_perbaikan(status):
+    if status == "TIDAK LAYAK":
+        return "Kurangi jumlah pengajuan atau pastikan cicilan lain telah lunas."
+    elif status == "PERLU SURVEY":
+        return "Perlu tinjauan lapangan atau dokumen tambahan untuk validasi."
+    return None
+
 
 # ===================== ATURAN & PENILAIAN =====================
 def aturan_keras(data):
@@ -205,16 +215,22 @@ def evaluasi_akhir(data):
             "status": "DITOLAK",
             "alasan": PENJELASAN_STATUS["DITOLAK"],
             "skor_fuzzy": 0,
+            "risiko": "TINGGI",
+            "saran": "Tidak memenuhi syarat dasar kelayakan.",
             "usia_hasil_ocr": data.get("usia_ocr"),
             "input": data
         }
 
     skor = skor_fuzzy(data)
     status = "LAYAK" if skor >= 70 else "PERLU SURVEY" if skor >= 50 else "TIDAK LAYAK"
+    risiko = kategori_risiko(skor)
+    saran = saran_perbaikan(status)
 
     return {
         "status": status,
+        "risiko": risiko,
         "alasan": PENJELASAN_STATUS[status],
+        "saran": saran,
         "skor_fuzzy": skor,
         "usia_hasil_ocr": data.get("usia_ocr"),
         "input": data
@@ -262,7 +278,7 @@ def run_fuzzy():
             print(f"[INFO] Record {doc_id} dibatalkan, dilewati.")
             continue
         if status == "process":
-            # Sedang diproses, skip atau bisa kamu sesuaikan
+            # Sedang diproses, skip bisa di sesuaikan
             print(f"[INFO] Record {doc_id} sedang diproses, dilewati.")
             continue
 
@@ -292,8 +308,17 @@ def run_fuzzy():
         )
 
         hasil = evaluasi_akhir(record)
+
+        hasil["timestamp"] = datetime.utcnow().isoformat()
+        hasil["agent"] = {
+        "email": record.get("agentEmail"),
+        "nama": record.get("agentName"),
+        "telepon": record.get("agentPhone")
+        }
+
         firestore_client.collection("hasil_prediksi").document(doc_id).set(hasil)
         processed += 1
+
 
     return jsonify({"message": f"Processed {processed} records."})
 
