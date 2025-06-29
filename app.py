@@ -58,14 +58,24 @@ def normalisasi_pekerjaan(teks):
 
 def konversi_uang(teks):
     if pd.isnull(teks): return 0
+
     teks = str(teks).lower().replace('.', '').replace(',', '.').replace('rp', '').strip()
-    match = re.search(r'(\d+\.?\d*)\s*(juta|jt|ribu|rb)?', teks)
-    if not match: return 0
+    match = re.search(r'(\d+\.?\d*)\s*(k|rb|ribu|jt|juta|m|miliar|b)?', teks)
+
+    if not match:
+        return 0
 
     num = float(match.group(1))
     satuan = match.group(2)
-    return int(num * 1_000_000) if satuan in ['juta', 'jt'] else \
-           int(num * 1_000) if satuan in ['ribu', 'rb'] else int(num)
+
+    if satuan in ['k', 'rb', 'ribu']:
+        return int(num * 1_000)
+    elif satuan in ['jt', 'juta', 'm']:
+        return int(num * 1_000_000)
+    elif satuan in ['miliar', 'b']:
+        return int(num * 1_000_000_000)
+    else:
+        return int(num)
 
 def ekstrak_usia_dari_ktp(img_bytes):
     try:
