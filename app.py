@@ -5,7 +5,6 @@ from firebase_admin import credentials, db, firestore
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from flask import Flask, jsonify, request
-import pytesseract
 from PIL import Image
 from datetime import datetime
 import io
@@ -59,8 +58,8 @@ def normalisasi_pekerjaan(teks):
 def konversi_uang(teks):
     if pd.isnull(teks): return 0
 
-    teks = str(teks).lower().replace('.', '').replace(',', '.').replace('rp', '').strip()
-    match = re.search(r'(\d+\.?\d*)\s*(k|rb|ribu|jt|juta|m|miliar|b)?', teks)
+    teks = str(teks).lower().replace(".", "").replace(",", ".").replace("rp", "").strip()
+    match = re.search(r"(\d+\.?\d*)\s*(k|rb|ribu|jt|juta|m|miliar|b)?", teks)
 
     if not match:
         return 0
@@ -68,32 +67,14 @@ def konversi_uang(teks):
     num = float(match.group(1))
     satuan = match.group(2)
 
-    if satuan in ['k', 'rb', 'ribu']:
+    if satuan in ["k", "rb", "ribu"]:
         return int(num * 1_000)
-    elif satuan in ['jt', 'juta', 'm']:
+    elif satuan in ["jt", "juta", "m"]:
         return int(num * 1_000_000)
-    elif satuan in ['miliar', 'b']:
+    elif satuan in ["miliar", "b"]:
         return int(num * 1_000_000_000)
     else:
         return int(num)
-
-def ekstrak_usia_dari_ktp(img_bytes):
-    try:
-        image = Image.open(io.BytesIO(img_bytes))
-        text = pytesseract.image_to_string(image)
-        match = re.search(r'(\d{2}-\d{2}-\d{4})', text)
-        if not match:
-            match = re.search(r'(\d{2}/\d{2}/\d{4})', text)
-        if not match:
-            match = re.search(r'(\d{2}.\d{2}.\d{4})', text)
-        if match:
-            tgl = re.sub(r'[^0-9]', '-', match.group(1))
-            tgl_lahir = datetime.strptime(tgl, "%d-%m-%Y")
-            usia = (datetime.now() - tgl_lahir).days // 365
-            return usia
-    except Exception as e:
-        print("OCR Error:", e)
-    return None
 
 def rekomendasi_tenor(gaji, plafon=None):
     if gaji <= 0 or plafon is None or plafon <= 0:
@@ -170,64 +151,95 @@ def saran_perbaikan(status):
     elif status == "PERLU SURVEY":
         return "Perlu tinjauan lapangan atau dokumen tambahan untuk validasi."
     return None
-
-
 # ===================== ATURAN & PENILAIAN =====================
 def aturan_keras(data):
-    usia_lunas = data['usia'] + data['tenor'] / 12
-
-    if data['tinggal_di_kost']:
+    if data["tinggal_di_kost"]:
         return False, "Tinggal di kost tidak diperbolehkan."
-    if data['pekerjaan'] == 'karyawan' and usia_lunas > 55:
-        return False, "Usia > 55 untuk karyawan."
-    if data['pekerjaan'] == 'wiraswasta' and usia_lunas > 60:
-        return False, "Usia > 60 untuk wiraswasta."
-    if data['jenis_pengajuan'] == 'mobil' and data['gaji'] < 10_000_000 and data['cicilan_lain'] > 0:
+    # Modified rule for wiraswasta with 0 income
+    if data["pekerjaan"] == "wiraswasta" and data["gaji"] == 0:
+        return True, "Wiraswasta dengan gaji 0 akan dipertimbangkan untuk survey."
+    # Removed age-related rules for karyawan and wiraswasta
+    if data["jenis_pengajuan"] == "mobil" and data["gaji"] < 10_000_000 and data["cicilan_lain"] > 0:
         return False, "Gaji <10jt dan ada cicilan lain."
-    if data['pengajuan_baru'] > 0.30 * data['gaji']:
+    if data["pengajuan_baru"] > 0.30 * data["gaji"]:
         return False, "Cicilan > 30% dari gaji."
     return True, "Lolos aturan keras."
 
 def skor_fuzzy(data):
     skor = 0
-    skor += 30 if data['gaji'] >= 10_000_000 else \
-            25 if data['gaji'] >= 7_000_000 else \
-            20 if data['gaji'] >= 5_000_000 else \
-            15 if data['gaji'] >= 3_000_000 else 10
 
+    # Base score from gaji
+    if data["gaji"] >= 10_000_000:
+        skor += 30
+    elif data["gaji"] >= 7_000_000:
+        skor += 25
+    elif data["gaji"] >= 5_000_000:
+        skor += 20
+    elif data["gaji"] >= 3_000_000:
+        skor += 15
+    else:
+        skor += 10
+
+    # Adjust score based on Adira car loan rules
+    if data["jenis_pengajuan"] == "mobil":
+        if data["cicilan_lain"] > 0: # If other installments exist
+            if data["gaji"] == 10_000_000:
+                skor -= 10 # Not recommended, lower score
+            elif data["gaji"] > 10_000_000:
+                skor += 5 # Considered, slight positive
+        else: # No other installments
+            if data["gaji"] < 10_000_000:
+                skor -= 10 # Not recommended, lower score
+            elif data["gaji"] == 10_000_000:
+                skor += 5 # Considered, slight positive
+            elif data["gaji"] > 10_000_000:
+                skor += 10 # Approve, higher score
+
+    # Score from pekerjaan
     map_pekerjaan = {
         'pns': 30, 'karyawan': 25, 'profesional': 20,
         'wiraswasta': 15, 'freelancer': 15,
         'driver': 10, 'buruh': 10, 'tidak bekerja': 5
     }
-    skor += map_pekerjaan.get(data['pekerjaan'], 10)
+    skor += map_pekerjaan.get(data["pekerjaan"], 10)
 
-    skor += 20 if data['cicilan_lain'] == 0 else \
-            10 if data['cicilan_lain'] < 0.20 * data['gaji'] else 0
+    # Score from cicilan_lain
+    skor += 20 if data["cicilan_lain"] == 0 else \
+            10 if data["cicilan_lain"] < 0.20 * data["gaji"] else 0
 
-    skor += 20 if data['pengajuan_baru'] <= 0.30 * data['gaji'] else \
-            10 if data['pengajuan_baru'] <= 0.50 * data['gaji'] else 0
+    # Score from pengajuan_baru (debt-to-income ratio)
+    skor += 20 if data["pengajuan_baru"] <= 0.30 * data["gaji"] else \
+            10 if data["pengajuan_baru"] <= 0.50 * data["gaji"] else 0
 
     return skor
 
 def evaluasi_akhir(data):
-    for k in ['gaji', 'cicilan_lain', 'pengajuan_baru']:
+    for k in ["gaji", "cicilan_lain", "pengajuan_baru"]:
         data[k] = konversi_uang(data[k]) if isinstance(data[k], str) else data[k]
 
-    data['pekerjaan'] = normalisasi_pekerjaan(data['pekerjaan'])
+    data["pekerjaan"] = normalisasi_pekerjaan(data["pekerjaan"])
 
-    if 'tenor' not in data or not data['tenor']:
-        data['tenor'] = rekomendasi_tenor(data['gaji'], data['pengajuan_baru'])
+    if "tenor" not in data or not data["tenor"]:
+        data["tenor"] = rekomendasi_tenor(data["gaji"], data["pengajuan_baru"])
 
     lolos, _ = aturan_keras(data)
-    if not lolos:
+    # If wiraswasta with 0 income, force to PERLU SURVEY
+    if data["pekerjaan"] == "wiraswasta" and data["gaji"] == 0 and lolos:
+        return {
+            "status": "PERLU SURVEY",
+            "alasan": PENJELASAN_STATUS["PERLU SURVEY"],
+            "skor_fuzzy": 50, # Set a score that falls into PERLU SURVEY range
+            "risiko": kategori_risiko(50),
+            "saran": "Wiraswasta dengan gaji 0, perlu survey lebih lanjut untuk validasi pendapatan.",
+            "input": data
+        }
+    elif not lolos:
         return {
             "status": "DITOLAK",
             "alasan": PENJELASAN_STATUS["DITOLAK"],
             "skor_fuzzy": 0,
             "risiko": "TINGGI",
             "saran": "Tidak memenuhi syarat dasar kelayakan.",
-            "usia_hasil_ocr": data.get("usia_ocr"),
             "input": data
         }
 
@@ -242,10 +254,8 @@ def evaluasi_akhir(data):
         "alasan": PENJELASAN_STATUS[status],
         "saran": saran,
         "skor_fuzzy": skor,
-        "usia_hasil_ocr": data.get("usia_ocr"),
         "input": data
     }
-
 # ===================== FLASK API =====================
 
 @app.route("/")
@@ -255,24 +265,15 @@ def home():
 @app.route("/prediksi", methods=["POST"])
 def prediksi():
     input_data = request.form.to_dict()
-    file = request.files.get("ktp")
-
-    if file:
-        usia = ekstrak_usia_dari_ktp(file.read())
-        input_data['usia_ocr'] = usia
-    else:
-        usia = int(input_data.get("usia", 0))
-
-    input_data['usia'] = usia or 0
-    input_data['tinggal_di_kost'] = input_data.get('tinggal_di_kost', 'tidak') == 'ya'
-    input_data['jenis_pengajuan'] = input_data.get('item', '').lower()
+    input_data["tinggal_di_kost"] = input_data.get("tinggal_di_kost", "tidak") == "ya"
+    input_data["jenis_pengajuan"] = input_data.get("item", "").lower()
 
     hasil = evaluasi_akhir(input_data)
     return jsonify(hasil)
 
 @app.route("/run_fuzzy", methods=["GET"])
 def run_fuzzy():
-    data = db.reference('orders').get()
+    data = db.reference("orders").get()
     if not data:
         return jsonify({"message": "No new data."}), 200
 
@@ -292,29 +293,15 @@ def run_fuzzy():
             print(f"[INFO] Record {doc_id} sedang diproses, dilewati.")
             continue
 
-        record['tinggal_di_kost'] = False
-        record['jenis_pengajuan'] = record.get('item', '').lower()
-        record['usia'] = 30
-        record['usia_ocr'] = None
-        if 'ktp' in record and record['ktp']:
-            try:
-                resp = requests.get(record['ktp'])
-                if resp.status_code == 200:
-                    usia_ocr = ekstrak_usia_dari_ktp(resp.content)
-                    if usia_ocr:
-                        record['usia'] = usia_ocr
-                        record['usia_ocr'] = usia_ocr
-                        print(f"[INFO] OCR berhasil: usia = {usia_ocr} dari {record['ktp']}")
-            except Exception as e:
-                print("Error ambil KTP:", e)
-
-        record['gaji'] = record.get('income', 0)
-        record['cicilan_lain'] = record.get('installment', 0)
-        record['pengajuan_baru'] = record.get('nominal', 0)
-        record['pekerjaan'] = record.get('job', '')
-        record['tenor'] = rekomendasi_tenor(
-            konversi_uang(record['gaji']),
-            konversi_uang(record['pengajuan_baru'])
+        record["tinggal_di_kost"] = False
+        record["jenis_pengajuan"] = record.get("item", "").lower()
+        record["gaji"] = record.get("income", 0)
+        record["cicilan_lain"] = record.get("installment", 0)
+        record["pengajuan_baru"] = record.get("nominal", 0)
+        record["pekerjaan"] = record.get("job", "")
+        record["tenor"] = rekomendasi_tenor(
+            konversi_uang(record["gaji"]),
+            konversi_uang(record["pengajuan_baru"])
         )
 
         hasil = evaluasi_akhir(record)
