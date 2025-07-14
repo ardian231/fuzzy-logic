@@ -153,8 +153,6 @@ def saran_perbaikan(status):
     return None
 # ===================== ATURAN & PENILAIAN =====================
 def aturan_keras(data):
-    if data["tinggal_di_kost"]:
-        return False, "Tinggal di kost tidak diperbolehkan."
     # Modified rule for wiraswasta with 0 income
     if data["pekerjaan"] == "wiraswasta" and data["gaji"] == 0:
         return True, "Wiraswasta dengan gaji 0 akan dipertimbangkan untuk survey."
