@@ -182,13 +182,13 @@ def skor_fuzzy(data):
 
     # Base score from gaji
     if data["gaji"] >= 10_000_000:
-        skor += 30
+        skor += 35
     elif data["gaji"] >= 7_000_000:
-        skor += 25
+        skor += 30
     elif data["gaji"] >= 5_000_000:
-        skor += 20
+        skor += 25
     elif data["gaji"] >= 3_000_000:
-        skor += 15
+        skor += 20
     else:
         skor += 10
 
