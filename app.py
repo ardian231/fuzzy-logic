@@ -120,16 +120,19 @@ def rekomendasi_tenor(gaji, plafon=None):
 
     # Aturan Sugeno: (bobot, nilai_tenor)
     rules = [
-        (min(gaji_rendah, ratio_besar), 12),
-        (min(gaji_rendah, ratio_sedang), 18),
-        (min(gaji_rendah, ratio_kecil), 24),
-        (min(gaji_sedang, ratio_besar), 18),
-        (min(gaji_sedang, ratio_sedang), 24),
-        (min(gaji_sedang, ratio_kecil), 36),
-        (min(gaji_tinggi, ratio_besar), 24),
-        (min(gaji_tinggi, ratio_sedang), 36),
-        (min(gaji_tinggi, ratio_kecil), 48)
-    ]
+    (min(gaji_rendah, ratio_besar), 48),   
+    (min(gaji_rendah, ratio_sedang), 36),
+    (min(gaji_rendah, ratio_kecil), 24),   
+
+    (min(gaji_sedang, ratio_besar), 36),
+    (min(gaji_sedang, ratio_sedang), 24),
+    (min(gaji_sedang, ratio_kecil), 18),
+
+    (min(gaji_tinggi, ratio_besar), 24),
+    (min(gaji_tinggi, ratio_sedang), 18),
+    (min(gaji_tinggi, ratio_kecil), 12)
+]
+
 
     numerator = sum(weight * output for weight, output in rules)
     denominator = sum(weight for weight, _ in rules)
@@ -153,14 +156,16 @@ def saran_perbaikan(status):
     return None
 # ===================== ATURAN & PENILAIAN =====================
 def aturan_keras(data):
-    # Modified rule for wiraswasta with 0 income
     if data["pekerjaan"] == "wiraswasta" and data["gaji"] == 0:
         return True, "Wiraswasta dengan gaji 0 akan dipertimbangkan untuk survey."
-    # Removed age-related rules for karyawan and wiraswasta
+
     if data["jenis_pengajuan"] == "mobil" and data["gaji"] < 10_000_000 and data["cicilan_lain"] > 0:
         return False, "Gaji <10jt dan ada cicilan lain."
-    if data["pengajuan_baru"] > 0.30 * data["gaji"]:
-        return False, "Cicilan > 30% dari gaji."
+
+    angsuran_per_bulan = data["pengajuan_baru"] / data["tenor"]
+    if angsuran_per_bulan > 0.30 * data["gaji"]:
+        return False, "Angsuran > 30% dari gaji."
+
     return True, "Lolos aturan keras."
 
 def skor_fuzzy(data):
@@ -220,13 +225,29 @@ def evaluasi_akhir(data):
     if "tenor" not in data or not data["tenor"]:
         data["tenor"] = rekomendasi_tenor(data["gaji"], data["pengajuan_baru"])
 
+    # Hitung angsuran per bulan dan rasio terhadap gaji
+    angsuran_per_bulan = data["pengajuan_baru"] / data["tenor"]
+    rasio = angsuran_per_bulan / data["gaji"]
+
+    data["angsuran"] = int(angsuran_per_bulan)
+    data["rasio_angsuran"] = round(rasio, 2)
+
+    if rasio > 0.5:
+        data["note_approval"] = "Angsuran sangat besar terhadap gaji."
+    elif rasio > 0.3:
+        data["note_approval"] = "Angsuran cukup tinggi, perlu pertimbangan."
+    else:
+        data["note_approval"] = "Angsuran wajar terhadap gaji."
+
+    # Cek aturan keras
     lolos, _ = aturan_keras(data)
-    # If wiraswasta with 0 income, force to PERLU SURVEY
+
+    # Kasus wiraswasta tanpa gaji
     if data["pekerjaan"] == "wiraswasta" and data["gaji"] == 0 and lolos:
         return {
             "status": "PERLU SURVEY",
             "alasan": PENJELASAN_STATUS["PERLU SURVEY"],
-            "skor_fuzzy": 50, # Set a score that falls into PERLU SURVEY range
+            "skor_fuzzy": 50,
             "risiko": kategori_risiko(50),
             "saran": "Wiraswasta dengan gaji 0, perlu survey lebih lanjut untuk validasi pendapatan.",
             "input": data
@@ -241,6 +262,7 @@ def evaluasi_akhir(data):
             "input": data
         }
 
+    # Hitung skor fuzzy
     skor = skor_fuzzy(data)
     status = "LAYAK" if skor >= 70 else "PERLU SURVEY" if skor >= 50 else "TIDAK LAYAK"
     risiko = kategori_risiko(skor)
@@ -250,10 +272,12 @@ def evaluasi_akhir(data):
         "status": status,
         "risiko": risiko,
         "alasan": PENJELASAN_STATUS[status],
-        "saran": saran,
+        "saran": f"{saran} {data['note_approval']}" if saran else data['note_approval'],
         "skor_fuzzy": skor,
         "input": data
     }
+
+
 # ===================== FLASK API =====================
 
 @app.route("/")
