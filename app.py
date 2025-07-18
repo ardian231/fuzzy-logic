@@ -364,36 +364,5 @@ def warmup():
     except Exception as e:
         return jsonify({"status": "error", "detail": str(e)}), 500
     
-
-@app.route("/prediksi_batch", methods=["POST"])
-def prediksi_batch():
-    try:
-        input_df = pd.read_json(request.files["file"])
-        hasil_list = []
-
-        for i, row in input_df.iterrows():
-            data = row.to_dict()
-            hasil = evaluasi_akhir(data)
-            hasil_flat = {
-                "status": hasil["status"],
-                "skor_fuzzy": hasil["skor_fuzzy"],
-                "risiko": hasil["risiko"],
-                "saran": hasil["saran"]
-            }
-            # tambahkan hanya field yang penting
-            hasil_flat.update(data)
-            hasil_list.append(hasil_flat)
-
-            # Optional: jika lebih dari 100, flush/save sementara
-
-        df_hasil = pd.DataFrame(hasil_list)
-        file_path = "/tmp/hasil_prediksi.xlsx"
-        df_hasil.to_excel(file_path, index=False)
-        return jsonify({"message": f"{len(df_hasil)} data berhasil diproses.", "download": "/download/hasil_prediksi.xlsx"}), 200
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
 if __name__ == "__main__":
     app.run(debug=True)
