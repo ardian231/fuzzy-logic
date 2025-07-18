@@ -36,7 +36,7 @@ PEKERJAAN_ALIAS = {
 
 PENJELASAN_STATUS = {
     "LAYAK": ["Pendapatan memadai.", "Jenis pekerjaan dan cicilan sesuai."],
-    "PERLU SURVEY": ["Data perlu tinjauan lebih lanjut.", "Beberapa indikator belum optimal."],
+    "DI PERTIMBANGKAN": ["Data perlu tinjauan lebih lanjut.", "Beberapa indikator belum optimal."],
     "TIDAK LAYAK": ["Pendapatan atau pekerjaan kurang mendukung.", "Beban cicilan terlalu tinggi."],
     "DITOLAK": ["Gagal lolos syarat dasar (aturan keras)."]
 }
@@ -56,25 +56,34 @@ def normalisasi_pekerjaan(teks):
     return label_terpilih
 
 def konversi_uang(teks):
-    if pd.isnull(teks): return 0
-
-    teks = str(teks).lower().replace(".", "").replace(",", ".").replace("rp", "").strip()
-    match = re.search(r"(\d+\.?\d*)\s*(k|rb|ribu|jt|juta|m|miliar|b)?", teks)
-
-    if not match:
+    if pd.isnull(teks):
         return 0
 
-    num = float(match.group(1))
-    satuan = match.group(2)
+    teks = str(teks).lower().replace("rp", "").replace(" ", "")
+    teks = teks.replace(".", "").replace(",", ".")
 
-    if satuan in ["k", "rb", "ribu"]:
-        return int(num * 1_000)
-    elif satuan in ["jt", "juta", "m"]:
-        return int(num * 1_000_000)
-    elif satuan in ["miliar", "b"]:
-        return int(num * 1_000_000_000)
-    else:
-        return int(num)
+    # Ambil semua pasangan angka + satuan
+    matches = re.findall(r"(\d+\.?\d*)\s*(k|rb|ribu|jt|juta|m|miliar|b)?", teks)
+    total = 0
+
+    for num_str, satuan in matches:
+        try:
+            num = float(num_str)
+        except ValueError:
+            continue
+
+        if satuan in ["k", "rb", "ribu", "rbu"]:
+            total += num * 1_000
+        elif satuan in ["jt", "juta", "m"]:
+            total += num * 1_000_000
+        elif satuan in ["miliar", "b"]:
+            total += num * 1_000_000_000
+        else:
+            total += num  # Kalau tidak ada satuan (opsional)
+
+    return int(total)
+
+
 
 def rekomendasi_tenor(gaji, plafon=None):
     if gaji <= 0 or plafon is None or plafon <= 0:
@@ -151,7 +160,7 @@ def kategori_risiko(skor):
 def saran_perbaikan(status):
     if status == "TIDAK LAYAK":
         return "Kurangi jumlah pengajuan atau pastikan cicilan lain telah lunas."
-    elif status == "PERLU SURVEY":
+    elif status == "DI PERTIMBANGKAN":
         return "Perlu tinjauan lapangan atau dokumen tambahan untuk validasi."
     return None
 # ===================== ATURAN & PENILAIAN =====================
@@ -245,8 +254,8 @@ def evaluasi_akhir(data):
     # Kasus wiraswasta tanpa gaji
     if data["pekerjaan"] == "wiraswasta" and data["gaji"] == 0 and lolos:
         return {
-            "status": "PERLU SURVEY",
-            "alasan": PENJELASAN_STATUS["PERLU SURVEY"],
+            "status": "DI PERTIMBANGKAN",
+            "alasan": PENJELASAN_STATUS["DI PERTIMBANGKAN"],
             "skor_fuzzy": 50,
             "risiko": kategori_risiko(50),
             "saran": "Wiraswasta dengan gaji 0, perlu survey lebih lanjut untuk validasi pendapatan.",
@@ -344,6 +353,17 @@ def run_fuzzy():
 @app.route("/ping", methods=["GET"])
 def ping():
     return jsonify({"message": "pong", "status": "ok"}), 200
+
+
+@app.route("/warmup", methods=["GET"])
+def warmup():
+    # Simulasikan query sederhana ke Firestore
+    try:
+        _ = firestore_client.collection("hasil_prediksi").limit(1).get()
+        return jsonify({"status": "warm"}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "detail": str(e)}), 500
+
 
 if __name__ == "__main__":
     app.run(debug=True)
