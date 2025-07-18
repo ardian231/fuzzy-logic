@@ -273,7 +273,7 @@ def evaluasi_akhir(data):
 
     # Hitung skor fuzzy
     skor = skor_fuzzy(data)
-    status = "LAYAK" if skor >= 70 else "PERLU SURVEY" if skor >= 50 else "TIDAK LAYAK"
+    status = "LAYAK" if skor >= 70 else "DI PERTIMBANGKAN" if skor >= 50 else "TIDAK LAYAK"
     risiko = kategori_risiko(skor)
     saran = saran_perbaikan(status)
 
@@ -363,6 +363,18 @@ def warmup():
         return jsonify({"status": "warm"}), 200
     except Exception as e:
         return jsonify({"status": "error", "detail": str(e)}), 500
+    
+    
+@app.route("/prediksi_batch", methods=["POST"])
+def prediksi_batch():
+    dataset = request.get_json().get("data", [])
+    hasil_semua = []
+
+    for data in dataset:
+        hasil = evaluasi_akhir(data)
+        hasil_semua.append(hasil)
+
+    return jsonify(hasil_semua)
 
 
 if __name__ == "__main__":
