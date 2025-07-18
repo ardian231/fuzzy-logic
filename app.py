@@ -130,10 +130,10 @@ def rekomendasi_tenor(gaji, plafon=None):
     # Aturan Sugeno: (bobot, nilai_tenor)
     rules = [
     (min(gaji_rendah, ratio_besar), 36),   
-    (min(gaji_rendah, ratio_sedang), 24),
-    (min(gaji_rendah, ratio_kecil), 18),   
+    (min(gaji_rendah, ratio_sedang), 30),
+    (min(gaji_rendah, ratio_kecil), 24),   
 
-    (min(gaji_sedang, ratio_besar), 36),
+    (min(gaji_sedang, ratio_besar), 30),
     (min(gaji_sedang, ratio_sedang), 24),
     (min(gaji_sedang, ratio_kecil), 18),
 
