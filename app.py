@@ -129,9 +129,9 @@ def rekomendasi_tenor(gaji, plafon=None):
 
     # Aturan Sugeno: (bobot, nilai_tenor)
     rules = [
-    (min(gaji_rendah, ratio_besar), 48),   
-    (min(gaji_rendah, ratio_sedang), 36),
-    (min(gaji_rendah, ratio_kecil), 24),   
+    (min(gaji_rendah, ratio_besar), 36),   
+    (min(gaji_rendah, ratio_sedang), 24),
+    (min(gaji_rendah, ratio_kecil), 18),   
 
     (min(gaji_sedang, ratio_besar), 36),
     (min(gaji_sedang, ratio_sedang), 24),
@@ -150,12 +150,12 @@ def rekomendasi_tenor(gaji, plafon=None):
         return 12  # fallback jika semua keanggotaan nol
 
     hasil = numerator / denominator
-    tenor_tersedia = [12, 18, 24, 36, 48]
+    tenor_tersedia = [12, 18, 24, 36,]
     tenor_terdekat = min(tenor_tersedia, key=lambda x: abs(x - hasil))
     return tenor_terdekat
 
 def kategori_risiko(skor):
-    return "RENDAH" if skor >= 75 else "SEDANG" if skor >= 60 else "TINGGI"
+    return "RENDAH" if skor >= 75 else "SEDANG" if skor >= 55 else "TINGGI"
 
 def saran_perbaikan(status):
     if status == "TIDAK LAYAK":
@@ -296,7 +296,6 @@ def home():
 @app.route("/prediksi", methods=["POST"])
 def prediksi():
     input_data = request.form.to_dict()
-    input_data["tinggal_di_kost"] = input_data.get("tinggal_di_kost", "tidak") == "ya"
     input_data["jenis_pengajuan"] = input_data.get("item", "").lower()
 
     hasil = evaluasi_akhir(input_data)
