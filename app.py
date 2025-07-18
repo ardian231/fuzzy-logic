@@ -150,7 +150,7 @@ def rekomendasi_tenor(gaji, plafon=None):
         return 12  # fallback jika semua keanggotaan nol
 
     hasil = numerator / denominator
-    tenor_tersedia = [12, 18, 24, 36,]
+    tenor_tersedia = [12, 18, 24, 30, 36,]
     tenor_terdekat = min(tenor_tersedia, key=lambda x: abs(x - hasil))
     return tenor_terdekat
 
