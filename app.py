@@ -235,7 +235,7 @@ def skor_fuzzy(data):
     map_pekerjaan = {
         'pns': 30, 'karyawan': 25, 'profesional': 25,
         'wiraswasta': 20, 'freelancer': 20,
-        'driver': 15, 'buruh': 15, 'tidak bekerja': 5
+        'driver': 15, 'buruh': 15, 'petani':15, 'tidak bekerja': 5
     }
     skor += map_pekerjaan.get(data["pekerjaan"], 10)
 
