@@ -24,14 +24,35 @@ firestore_client = firestore.client()
 app = Flask(__name__)
 
 PEKERJAAN_ALIAS = {
-    'pns': ['pns', 'pegawai negeri'],
-    'karyawan': ['karyawan', 'pegawai swasta', 'staff', 'pegawai'],
-    'profesional': ['dokter', 'pengacara', 'notaris', 'arsitek'],
-    'wiraswasta': ['wiraswasta', 'pengusaha', 'dagang', 'usaha sendiri', 'pedagang'],
-    'freelancer': ['freelancer', 'pekerja lepas', 'remote', 'freelance'],
-    'driver': ['driver', 'sopir', 'ojol', 'ngojek'],
-    'buruh': ['buruh', 'kuli', 'tenaga kasar'],
-    'tidak bekerja': ['tidak bekerja', 'pengangguran', 'belum kerja']
+    "pns": [
+        "kelurahan", "kecamatan", "dinas", "pemkab", "pemkot", "puskesmas", "bpn", "rsud", "bumn", "bkd",
+        "bpjs", "kemen", "perangkat desa", "guru", "sekolah negeri"
+    ],
+    "karyawan": [
+        "pt", "cv", "toko", "minimarket", "indomaret", "alfamart", "supermarket", "mall", "kantor", "plaza",
+        "dealer", "kopkar", "perusahaan", "swasta", "asuransi", "karyawan", "bank", "industri", "hotel", "sekolah swasta"
+    ],
+    "wiraswasta": [
+        "usaha", "warung", "dagang", "bengkel", "konter", "resto", "kuliner", "umkm", "cafe", "kosmetik", "laundry",
+        "barbershop", "cucian", "perabot", "tokopedia", "shopee", "jualan", "dropship", "jual", "jasa"
+    ],
+    "driver": [
+        "ojol", "gojek", "grab", "sopir", "driver", "kurir", "pengemudi", "angkot", "ojek", "logistik", "ngojek"
+    ],
+    "freelancer": [
+        "freelance", "editor", "fotografer", "youtuber", "desainer", "animator", "konten", "blogger", "musisi",
+        "influencer", "penulis"
+    ],
+    "buruh": [
+        "pabrik", "buruh", "kuli", "gudang", "produksi", "tenaga kasar", "angkut", "operator"
+    ],
+    "profesional": [
+        "dokter", "pengacara", "notaris", "arsitek", "akuntan", "psikolog", "insinyur", "konsultan", "bidan",
+        "perawat", "auditor"
+    ],
+    "petani": [
+        "petani", "perkebunan", "sawah", "ladang", "tani", "nelayan", "tambak", "peternak"
+    ]
 }
 
 PENJELASAN_STATUS = {
@@ -155,7 +176,7 @@ def rekomendasi_tenor(gaji, plafon=None):
     return tenor_terdekat
 
 def kategori_risiko(skor):
-    return "RENDAH" if skor >= 75 else "SEDANG" if skor >= 55 else "TINGGI"
+    return "RENDAH" if skor >= 70 else "SEDANG" if skor >= 55 else "TINGGI"
 
 def saran_perbaikan(status):
     if status == "TIDAK LAYAK":
@@ -179,16 +200,19 @@ def aturan_keras(data):
 
 def skor_fuzzy(data):
     skor = 0
-
-    # Base score from gaji
-    if data["gaji"] >= 10_000_000:
+    gaji = data["gaji"]
+    if gaji >= 10_000_000:
         skor += 35
-    elif data["gaji"] >= 7_000_000:
+    elif gaji >= 7_000_000:
+        skor += 35
+    elif gaji >= 5_000_000:
         skor += 30
-    elif data["gaji"] >= 5_000_000:
+    elif gaji >= 3_000_000:
         skor += 25
-    elif data["gaji"] >= 3_000_000:
+    elif gaji >= 2_000_000:
         skor += 20
+    elif gaji >= 1_000_000:
+        skor += 15
     else:
         skor += 10
 
@@ -209,15 +233,19 @@ def skor_fuzzy(data):
 
     # Score from pekerjaan
     map_pekerjaan = {
-        'pns': 30, 'karyawan': 25, 'profesional': 20,
-        'wiraswasta': 15, 'freelancer': 15,
-        'driver': 10, 'buruh': 10, 'tidak bekerja': 5
+        'pns': 30, 'karyawan': 25, 'profesional': 25,
+        'wiraswasta': 20, 'freelancer': 20,
+        'driver': 15, 'buruh': 15, 'tidak bekerja': 5
     }
     skor += map_pekerjaan.get(data["pekerjaan"], 10)
 
-    # Score from cicilan_lain
-    skor += 20 if data["cicilan_lain"] == 0 else \
-            10 if data["cicilan_lain"] < 0.20 * data["gaji"] else 0
+    if data["cicilan_lain"] == 0:
+        skor += 25
+    elif data["cicilan_lain"] < 0.20 * data["gaji"]:
+        skor += 15
+    else:
+        skor += 5
+
 
     # Score from pengajuan_baru (debt-to-income ratio)
     skor += 20 if data["pengajuan_baru"] <= 0.30 * data["gaji"] else \
@@ -273,7 +301,7 @@ def evaluasi_akhir(data):
 
     # Hitung skor fuzzy
     skor = skor_fuzzy(data)
-    status = "LAYAK" if skor >= 70 else "DI PERTIMBANGKAN" if skor >= 50 else "TIDAK LAYAK"
+    status = "LAYAK" if skor >= 70 else "DI PERTIMBANGKAN" if skor >= 55 else "LAYAK" if skor >= 50 and rasio < 0.1 and ["cicilan_lain"] == 0 else "DI PERTIMBANGKAN" if skor >= 50 else "TIDAK LAYAK"
     risiko = kategori_risiko(skor)
     saran = saran_perbaikan(status)
 
