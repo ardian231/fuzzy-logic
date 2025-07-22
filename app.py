@@ -246,11 +246,6 @@ def skor_fuzzy(data):
     else:
         skor += 5
 
-
-    # Score from pengajuan_baru (debt-to-income ratio)
-    skor += 20 if data["pengajuan_baru"] <= 0.30 * data["gaji"] else \
-            10 if data["pengajuan_baru"] <= 0.50 * data["gaji"] else 0
-
     return skor
 
 def evaluasi_akhir(data):
