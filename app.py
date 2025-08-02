@@ -79,29 +79,27 @@ def normalisasi_pekerjaan(teks):
 def konversi_uang(teks):
     if pd.isnull(teks):
         return 0
-
-    teks = str(teks).lower().replace("rp", "").replace(" ", "")
-    teks = teks.replace(".", "").replace(",", ".")
+    teks = str(teks).lower()
+    teks = teks.replace("rp", "").replace(",", ".").replace(" ", "")
 
     # Ambil semua pasangan angka + satuan
-    matches = re.findall(r"(\d+\.?\d*)\s*(k|rb|ribu|jt|juta|m|miliar|b)?", teks)
-    total = 0
+    matches = re.findall(r"([0-9.]+)(k|rb|ribu|jt|juta|m|miliar|b)?", teks)
 
-    for num_str, satuan in matches:
+    total = 0
+    for angka, satuan in matches:
         try:
-            num = float(num_str)
+            num = float(angka)
         except ValueError:
             continue
 
-        if satuan in ["k", "rb", "ribu", "rbu"]:
+        if satuan in ["k", "rb", "ribu"]:
             total += num * 1_000
         elif satuan in ["jt", "juta", "m"]:
             total += num * 1_000_000
         elif satuan in ["miliar", "b"]:
             total += num * 1_000_000_000
         else:
-            total += num  # Kalau tidak ada satuan (opsional)
-
+            total += num  # tanpa satuan
     return int(total)
 
 
@@ -257,7 +255,6 @@ def evaluasi_akhir(data):
     if "tenor" not in data or not data["tenor"]:
         data["tenor"] = rekomendasi_tenor(data["gaji"], data["pengajuan_baru"])
 
-    # Hitung angsuran per bulan dan rasio terhadap gaji
     angsuran_per_bulan = data["pengajuan_baru"] / data["tenor"]
     rasio = angsuran_per_bulan / data["gaji"]
 
@@ -271,35 +268,26 @@ def evaluasi_akhir(data):
     else:
         data["note_approval"] = "Angsuran wajar terhadap gaji."
 
-    # Cek aturan keras
     lolos, _ = aturan_keras(data)
-
-    # Kasus wiraswasta tanpa gaji
     if data["pekerjaan"] == "wiraswasta" and data["gaji"] == 0 and lolos:
-        return {
-            "status": "DI PERTIMBANGKAN",
-            "alasan": PENJELASAN_STATUS["DI PERTIMBANGKAN"],
-            "skor_fuzzy": 50,
-            "risiko": kategori_risiko(50),
-            "saran": "Wiraswasta dengan gaji 0, perlu survey lebih lanjut untuk validasi pendapatan.",
-            "input": data
-        }
+        return {...}
     elif not lolos:
-        return {
-            "status": "DITOLAK",
-            "alasan": PENJELASAN_STATUS["DITOLAK"],
-            "skor_fuzzy": 0,
-            "risiko": "TINGGI",
-            "saran": "Tidak memenuhi syarat dasar kelayakan.",
-            "input": data
-        }
+        return {...}
 
-    # Hitung skor fuzzy
     skor = skor_fuzzy(data)
-    status = "LAYAK" if skor >= 70 else "DI PERTIMBANGKAN" if skor >= 55 else "LAYAK" if skor >= 50 and rasio < 0.1 and ["cicilan_lain"] == 0 else "DI PERTIMBANGKAN" if skor >= 50 else "TIDAK LAYAK"
+    if skor >= 70:
+        status = "LAYAK"
+    elif skor >= 55:
+        status = "DI PERTIMBANGKAN"
+    elif skor >= 50 and rasio < 0.1 and data["cicilan_lain"] == 0:
+        status = "LAYAK"
+    elif skor >= 50:
+        status = "DI PERTIMBANGKAN"
+    else:
+        status = "TIDAK LAYAK"
+
     risiko = kategori_risiko(skor)
     saran = saran_perbaikan(status)
-
     return {
         "status": status,
         "risiko": risiko,
@@ -309,20 +297,20 @@ def evaluasi_akhir(data):
         "input": data
     }
 
-
 # ===================== FLASK API =====================
-
 @app.route("/")
 def home():
     return "API prediksi kelayakan pembiayaan berjalan."
 
 @app.route("/prediksi", methods=["POST"])
 def prediksi():
-    input_data = request.form.to_dict()
-    input_data["jenis_pengajuan"] = input_data.get("item", "").lower()
-
-    hasil = evaluasi_akhir(input_data)
-    return jsonify(hasil)
+    try:
+        input_data = request.form.to_dict()
+        input_data["jenis_pengajuan"] = input_data.get("item", "").lower()
+        hasil = evaluasi_akhir(input_data)
+        return jsonify(hasil)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
 @app.route("/run_fuzzy", methods=["GET"])
 def run_fuzzy():
@@ -333,58 +321,40 @@ def run_fuzzy():
     processed = 0
     for doc_id, record in data.items():
         status = record.get("status", "").lower()
-
-        if status == "processed":
-            # Sudah selesai, skip
-            continue
-        if status == "cancel":
-            # Data dibatalkan, skip juga
-            print(f"[INFO] Record {doc_id} dibatalkan, dilewati.")
-            continue
-        if status == "process":
-            # Sedang diproses, skip bisa di sesuaikan
-            print(f"[INFO] Record {doc_id} sedang diproses, dilewati.")
+        if status in ["processed", "cancel", "process"]:
             continue
 
-        record["tinggal_di_kost"] = False
-        record["jenis_pengajuan"] = record.get("item", "").lower()
-        record["gaji"] = record.get("income", 0)
-        record["cicilan_lain"] = record.get("installment", 0)
-        record["pengajuan_baru"] = record.get("nominal", 0)
+        record["gaji"] = konversi_uang(record.get("income", 0))
+        record["cicilan_lain"] = konversi_uang(record.get("installment", 0))
+        record["pengajuan_baru"] = konversi_uang(record.get("nominal", 0))
         record["pekerjaan"] = record.get("job", "")
-        record["tenor"] = rekomendasi_tenor(
-            konversi_uang(record["gaji"]),
-            konversi_uang(record["pengajuan_baru"])
-        )
+        record["jenis_pengajuan"] = record.get("item", "").lower()
+        record["tenor"] = rekomendasi_tenor(record["gaji"], record["pengajuan_baru"])
 
         hasil = evaluasi_akhir(record)
-
         hasil["timestamp"] = datetime.utcnow().isoformat()
         hasil["agent"] = {
-        "email": record.get("agentEmail"),
-        "nama": record.get("agentName"),
-        "telepon": record.get("agentPhone")
+            "email": record.get("agentEmail"),
+            "nama": record.get("agentName"),
+            "telepon": record.get("agentPhone")
         }
 
         firestore_client.collection("hasil_prediksi").document(doc_id).set(hasil)
         processed += 1
 
-
     return jsonify({"message": f"Processed {processed} records."})
 
 @app.route("/ping", methods=["GET"])
 def ping():
-    return jsonify({"message": "pong", "status": "ok"}), 200
-
+    return jsonify({"message": "pong", "status": "ok"})
 
 @app.route("/warmup", methods=["GET"])
 def warmup():
-    # Simulasikan query sederhana ke Firestore
     try:
         _ = firestore_client.collection("hasil_prediksi").limit(1).get()
         return jsonify({"status": "warm"}), 200
     except Exception as e:
         return jsonify({"status": "error", "detail": str(e)}), 500
-    
+
 if __name__ == "__main__":
     app.run(debug=True)
