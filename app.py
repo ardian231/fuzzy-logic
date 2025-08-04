@@ -59,7 +59,7 @@ PENJELASAN_STATUS = {
     "LAYAK": ["Pendapatan memadai.", "Jenis pekerjaan dan cicilan sesuai."],
     "DI PERTIMBANGKAN": ["Data perlu tinjauan lebih lanjut.", "Beberapa indikator belum optimal."],
     "TIDAK LAYAK": ["Pendapatan atau pekerjaan kurang mendukung.", "Beban cicilan terlalu tinggi."],
-    "DITOLAK": ["Gagal lolos syarat dasar (aturan keras)."]
+    "DITOLAK": ["Gagal lolos syarat dasar (aturan keras).","kurangi jumlah pengajuan atau lunasi cicilan lain."]
 }
 
 # ===================== UTILITY =====================
@@ -273,7 +273,7 @@ def evaluasi_akhir(data):
         return {
         "status": "DI PERTIMBANGKAN",
         "risiko": "SEDANG",
-        "alasan": "Wiraswasta tanpa gaji tetap.",
+        "alasan": ["Wiraswasta tanpa gaji tetap."],
         "saran": "Lengkapi data penghasilan atau sertakan bukti usaha.",
         "skor_fuzzy": 55,
         "input": data
@@ -282,7 +282,7 @@ def evaluasi_akhir(data):
         return {
         "status": "DITOLAK",
         "risiko": "TINGGI",
-        "alasan": "Tidak memenuhi syarat dasar (aturan keras).",
+        "alasan": ["gagal lolos aturan dasar (aturan keras)."],
         "saran": "Perbaiki data atau hubungi admin.",
         "skor_fuzzy": 0,
         "input": data
