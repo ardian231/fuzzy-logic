@@ -332,7 +332,6 @@ def run_fuzzy():
         record["tenor"] = rekomendasi_tenor(record["gaji"], record["pengajuan_baru"])
 
         hasil = evaluasi_akhir(record)
-        hasil["timestamp"] = datetime.utcnow().isoformat()
         hasil["agent"] = {
             "email": record.get("agentEmail"),
             "nama": record.get("agentName"),
