@@ -270,9 +270,24 @@ def evaluasi_akhir(data):
 
     lolos, _ = aturan_keras(data)
     if data["pekerjaan"] == "wiraswasta" and data["gaji"] == 0 and lolos:
-        return {...}
+        return {
+        "status": "DI PERTIMBANGKAN",
+        "risiko": "SEDANG",
+        "alasan": "Wiraswasta tanpa gaji tetap.",
+        "saran": "Lengkapi data penghasilan atau sertakan bukti usaha.",
+        "skor_fuzzy": 55,
+        "input": data
+    }
     elif not lolos:
-        return {...}
+        return {
+        "status": "DITOLAK",
+        "risiko": "TINGGI",
+        "alasan": "Tidak memenuhi syarat dasar (aturan keras).",
+        "saran": "Perbaiki data atau hubungi admin.",
+        "skor_fuzzy": 0,
+        "input": data
+    }
+
 
     skor = skor_fuzzy(data)
     if skor >= 70:
