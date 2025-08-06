@@ -77,13 +77,21 @@ def normalisasi_pekerjaan(teks):
     return label_terpilih
 
 def konversi_uang(teks):
-    if pd.isnull(teks):
+    if pd.isnull(teks) or str(teks).strip() == "":
         return 0
-    teks = str(teks).lower()
-    teks = teks.replace("rp", "").replace(",", ".").replace(" ", "")
 
-    # Ambil semua pasangan angka + satuan
-    matches = re.findall(r"([0-9.]+)(k|rb|ribu|jt|juta|m|miliar|b)?", teks)
+    teks = str(teks).lower().replace("rp", "").replace(",", ".")
+    parts = teks.split()
+    hasil = []
+
+    for part in parts:
+        if re.match(r"^[0-9.]+$", part):
+            if part.count(".") > 1:
+                part = part.replace(".", "")
+        hasil.append(part)
+
+    teks = " ".join(hasil)
+    matches = re.findall(r"([0-9.]+)\s*(k|rb|ribu|jt|juta|m|miliar|b)?", teks)
 
     total = 0
     for angka, satuan in matches:
@@ -94,12 +102,12 @@ def konversi_uang(teks):
 
         if satuan in ["k", "rb", "ribu"]:
             total += num * 1_000
-        elif satuan in ["jt", "juta", "m"]:
+        elif satuan in ["jt", "juta"]:
             total += num * 1_000_000
-        elif satuan in ["miliar", "b"]:
+        elif satuan in ["miliar", "m"]:
             total += num * 1_000_000_000
         else:
-            total += num  # tanpa satuan
+            total += num
     return int(total)
 
 
