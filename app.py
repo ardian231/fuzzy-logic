@@ -175,7 +175,7 @@ def evaluasi_akhir(data: dict) -> dict:
     jenis    = str(data.get("jenis_pengajuan", "")).lower()
 
     # ===== HARD RULE 1: Mobil + Gaji < 10jt + Cicilan banyak =====
-    if "mobil" in jenis and gaji < 10000000 and cicilan >= 2000000:
+    if "mobil" in jenis and gaji < 10000000 and cicilan >= 1300000:
         status = "TIDAK LAYAK"
         risiko = "TINGGI"
         skor   = 40
