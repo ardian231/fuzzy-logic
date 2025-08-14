@@ -172,10 +172,35 @@ def evaluasi_akhir(data: dict) -> dict:
     gaji     = _to_int(data.get("gaji", 0))
     pinjaman = _to_int(data.get("pengajuan_baru", 0))
     cicilan  = _to_int(data.get("cicilan_lain", 0))
+    jenis    = str(data.get("jenis_pengajuan", "")).lower()
 
+    # ===== HARD RULE 1: Mobil + Gaji < 10jt + Cicilan banyak =====
+    if "mobil" in jenis and gaji < 10000000 and cicilan >= 2000000:
+        status = "TIDAK LAYAK"
+        risiko = "TINGGI"
+        skor   = 40
+        saran = "Penghasilan tidak memadai untuk pengajuan mobil dengan beban cicilan tinggi."
+        alasan_list = ["Pendapatan kurang mendukung.", "Beban cicilan terlalu tinggi."]
+        data["rasio_angsuran"] = round(_to_int(data.get("angsuran", 0)) / gaji, 2) if gaji > 0 else 0
+
+        return {
+            "agent": {
+                "email": data.get("agentEmail"),
+                "nama": data.get("agentName"),
+                "telepon": data.get("agentPhone")
+            },
+            "alasan": alasan_list,
+            "input": data,
+            "risiko": risiko,
+            "saran": saran,
+            "skor_fuzzy": skor,
+            "status": status
+        }
+
+    # ===== LANJUTKAN KE FUZZY LOGIC =====
     res = ENGINE.calculate_fuzzy_score(gaji=gaji, pinjaman=pinjaman, cicilan_lain=cicilan)
-    status = res["status"]              # "LAYAK" / "DI PERTIMBANGKAN" / "TIDAK LAYAK"
-    risiko = res["risiko_level"]        # "RENDAH" / "SEDANG" / "TINGGI"
+    status = res["status"]
+    risiko = res["risiko_level"]
     skor   = int(res["final_skor"])
 
     note_approval = (data.get("note_approval") or "").strip()
@@ -183,7 +208,6 @@ def evaluasi_akhir(data: dict) -> dict:
 
     alasan_list = PENJELASAN_STATUS.get(status, [])
 
-    # (opsional) hitung rasio_angsuran 
     try:
         angsuran_val = float(data.get("angsuran", 0) or 0)
         data["rasio_angsuran"] = round(angsuran_val / gaji, 2) if gaji > 0 else 0
@@ -197,7 +221,7 @@ def evaluasi_akhir(data: dict) -> dict:
             "telepon": data.get("agentPhone")
         },
         "alasan": alasan_list,
-        "input": data,          
+        "input": data,
         "risiko": risiko,
         "saran": saran,
         "skor_fuzzy": skor,
@@ -224,12 +248,12 @@ def run_fuzzy():
         if status_now in ["processed", "cancel", "process"]:
             continue
 
-        # 🔍 CEK APAKAH SUDAH ADA DI FIRESTORE
+        # CEK APAKAH SUDAH ADA DI FIRESTORE
         doc_ref = firestore_client.collection("hasil_prediksi").document(doc_id)
         if doc_ref.get().exists:
             continue  # skip kalau sudah pernah diproses
 
-        # Normalisasi field minimal
+        # Normalisasi
         record["gaji"] = _to_int(record.get("income", 0))
         record["cicilan_lain"] = _to_int(record.get("installment", 0))
         record["pengajuan_baru"] = _to_int(record.get("nominal", 0))
