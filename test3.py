@@ -183,7 +183,7 @@ def evaluasi_akhir(data: dict) -> dict:
 
     alasan_list = PENJELASAN_STATUS.get(status, [])
 
-    # (opsional) hitung rasio_angsuran 
+    # (opsional) hitung rasio_angsuran untuk ditaruh DI DALAM input
     try:
         angsuran_val = float(data.get("angsuran", 0) or 0)
         data["rasio_angsuran"] = round(angsuran_val / gaji, 2) if gaji > 0 else 0
@@ -208,10 +208,6 @@ def evaluasi_akhir(data: dict) -> dict:
 # -----------------------
 # ROUTE: proses massal
 # -----------------------
-@app.route("/ping", methods=["GET"])
-def ping():
-    return jsonify({"message": "pong", "status": "ok"})
-
 @app.route("/run_fuzzy", methods=["GET"])
 def run_fuzzy():
     data = db.reference("orders").get()
@@ -224,12 +220,7 @@ def run_fuzzy():
         if status_now in ["processed", "cancel", "process"]:
             continue
 
-        # 🔍 CEK APAKAH SUDAH ADA DI FIRESTORE
-        doc_ref = firestore_client.collection("hasil_prediksi").document(doc_id)
-        if doc_ref.get().exists:
-            continue  # skip kalau sudah pernah diproses
-
-        # Normalisasi field minimal
+        # Normalisasi field minimal yang dipakai engine (tanpa konversi_uang)
         record["gaji"] = _to_int(record.get("income", 0))
         record["cicilan_lain"] = _to_int(record.get("installment", 0))
         record["pengajuan_baru"] = _to_int(record.get("nominal", 0))
@@ -242,10 +233,9 @@ def run_fuzzy():
             "telepon": record.get("agentPhone")
         }
 
-        doc_ref.set(hasil)  # simpan hasil
+        # Simpan ke Firestore
+        firestore_client.collection("hasil_prediksi").document(doc_id).set(hasil)
         processed += 1
 
-    return jsonify({"message": f"Processed {processed} records."}), 200
 
-if __name__ == "__main__":
-    app.run(debug=True)
+    return jsonify({"message": f"Processed {processed} records."}), 200

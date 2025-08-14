@@ -183,7 +183,7 @@ def evaluasi_akhir(data: dict) -> dict:
 
     alasan_list = PENJELASAN_STATUS.get(status, [])
 
-    # (opsional) hitung rasio_angsuran 
+    # (opsional) hitung rasio_angsuran untuk ditaruh DI DALAM input
     try:
         angsuran_val = float(data.get("angsuran", 0) or 0)
         data["rasio_angsuran"] = round(angsuran_val / gaji, 2) if gaji > 0 else 0
@@ -248,4 +248,4 @@ def run_fuzzy():
     return jsonify({"message": f"Processed {processed} records."}), 200
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, port=5000)

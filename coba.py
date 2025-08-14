@@ -1,172 +1,361 @@
-import re
-import pandas as pd
+# app_fuzzy.py
 import firebase_admin
 from firebase_admin import credentials, db, firestore
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
 from flask import Flask, jsonify, request
-from datetime import datetime
 
-# ===================== KONFIGURASI =====================
+# ============== FIREBASE CONFIG ==============
 FIREBASE_CREDENTIALS = "firebase-key.json"
 DATABASE_URL = "https://reseller-form-a616f-default-rtdb.asia-southeast1.firebasedatabase.app/"
 
 if not firebase_admin._apps:
     cred = credentials.Certificate(FIREBASE_CREDENTIALS)
     firebase_admin.initialize_app(cred, {'databaseURL': DATABASE_URL})
-
 firestore_client = firestore.client()
 
-# ===================== APLIKASI FLASK =====================
 app = Flask(__name__)
 
-# ===================== DATA STATIS =====================
-PEKERJAAN_ALIAS = {
-    "pns": [
-        "kelurahan", "kecamatan", "dinas", "pemkab", "pemkot", "puskesmas", "bpn", "rsud", "bumn", "bkd",
-        "bpjs", "kemen", "perangkat desa", "guru", "sekolah negeri"
-    ],
-    "karyawan": [
-        "pt", "cv", "toko", "minimarket", "indomaret", "alfamart", "supermarket", "mall", "kantor", "plaza",
-        "dealer", "kopkar", "perusahaan", "swasta", "asuransi", "karyawan", "bank", "industri", "hotel", "sekolah swasta"
-    ],
-    "wiraswasta": [
-        "usaha", "warung", "dagang", "bengkel", "konter", "resto", "kuliner", "umkm", "cafe", "kosmetik", "laundry",
-        "barbershop", "cucian", "perabot", "tokopedia", "shopee", "jualan", "dropship", "jual", "jasa"
-    ],
-    "driver": [
-        "ojol", "gojek", "grab", "sopir", "driver", "kurir", "pengemudi", "angkot", "ojek", "logistik", "ngojek"
-    ],
-    "freelancer": [
-        "freelance", "editor", "fotografer", "youtuber", "desainer", "animator", "konten", "blogger", "musisi",
-        "influencer", "penulis"
-    ],
-    "buruh": [
-        "pabrik", "buruh", "kuli", "gudang", "produksi", "tenaga kasar", "angkut", "operator"
-    ],
-    "profesional": [
-        "dokter", "pengacara", "notaris", "arsitek", "akuntan", "psikolog", "insinyur", "konsultan", "bidan",
-        "perawat", "auditor"
-    ],
-    "petani": [
-        "petani", "perkebunan", "sawah", "ladang", "tani", "nelayan", "tambak", "peternak"
-    ]
+# ============== UTILITIES ==============
+def clamp(x, lo, hi): 
+    return max(lo, min(hi, x))
+
+def tri(x, a, b, c):
+    if a == b == c: 
+        return 1.0 if x == a else 0.0
+    if x <= a or x >= c: 
+        return 0.0
+    if x < b:  
+        return (x - a) / max(b - a, 1e-9)
+    return (c - x) / max(c - b, 1e-9)
+
+def trap(x, a, b, c, d):
+    if x <= a or x >= d: 
+        return 0.0
+    if b <= x <= c: 
+        return 1.0
+    if a < x < b:  
+        return (x - a) / max(b - a, 1e-9)
+    if c < x < d:  
+        return (d - x) / max(d - c, 1e-9)
+    return 0.0
+
+def pmt(rate_per_period, nper, pv):
+    if nper <= 0: 
+        return 0
+    if rate_per_period == 0: 
+        return pv / nper
+    r = rate_per_period
+    return pv * (r * (1 + r) ** nper) / ((1 + r) ** nper - 1)
+
+# ============== KEBIJAKAN: MARGIN & TENOR (tanpa input tenor) ==============
+MARGIN_DEFAULTS = {
+    # Motor
+    "motor_baru":   {"min": 12, "max": 48, "margin_tahunan": 0.20},
+    "motor_bekas":  {"min": 12, "max": 48, "margin_tahunan": 0.21},
+
+    # Mobil
+    "mobil_baru":   {"min": 12, "max": 48, "margin_tahunan": 0.16},
+    "mobil_bekas":  {"min": 12, "max": 48, "margin_tahunan": 0.17},
+
+    # AMANAH (Adira Multi Dana Syariah) — umumkan ke 48 bln
+    "amanah":       {"min": 12, "max": 48, "margin_tahunan": 0.16},
 }
+
+def _norm(s: str) -> str:
+    return (s or "").strip().lower()
+
+def pick_scheme(item_label: str) -> dict:
+    it = _norm(item_label)
+    if it == "motor baru":   return MARGIN_DEFAULTS["motor_baru"]
+    if it == "motor bekas":  return MARGIN_DEFAULTS["motor_bekas"]
+    if it == "mobil baru":   return MARGIN_DEFAULTS["mobil_baru"]
+    if it == "mobil bekas":  return MARGIN_DEFAULTS["mobil_bekas"]
+    if it.startswith("amanah"): return MARGIN_DEFAULTS["amanah"]
+    return {"min": 12, "max": 48, "margin_tahunan": 0.18}  # fallback
+
+def infer_nominal(dp: float, nominal: float | None, asumsi_dp_pct: float = 0.20) -> float:
+    """Jika nominal pinjaman tidak ada, tebak dari DP dan asumsi %DP kebijakan."""
+    if nominal and nominal > 0:
+        return float(nominal)
+    if dp and dp > 0 and asumsi_dp_pct > 0:
+        return float(dp) / asumsi_dp_pct
+    return 0.0
+
+def choose_tenor_and_installment(
+    gaji: float,
+    nominal: float,
+    item_label: str,
+    dp_pct: float | None = None,
+    tenor_hint: int | None = None,
+    margin_tahunan: float | None = None,
+    target_pti: float = 0.33,
+    pti_low: float = 0.25,
+    pti_high: float = 0.50,
+):
+    """
+    Pilih tenor otomatis agar PTI mendekati target.
+    - Validasi tenor ke rentang kebijakan (min..max).
+    - Jika nominal/gaji tidak valid → fallback pakai PTI target.
+    - Bias: DP% tinggi condong ke tenor lebih pendek; DP% rendah condong ke tenor lebih panjang.
+    Return: (tenor_dipakai, margin_tahun, angsuran_bulanan, pti)
+    """
+    sc = pick_scheme(item_label)
+    n_min, n_max = sc["min"], sc["max"]
+    year_rate = float(margin_tahunan) if margin_tahunan is not None else sc["margin_tahunan"]
+
+    if nominal <= 0 or gaji <= 0:
+        angs = target_pti * max(gaji, 1.0)
+        return int(n_max), year_rate, angs, angs / max(gaji, 1.0)
+
+    if tenor_hint:
+        n = max(n_min, min(int(tenor_hint), n_max))
+        angs = pmt(year_rate/12.0, n, nominal)
+        return n, year_rate, angs, angs / gaji
+
+    best = None  # (penalty, n, angs, pti)
+    for n in range(n_min, n_max + 1):
+        angs = pmt(year_rate/12.0, n, nominal)
+        pti  = angs / gaji
+        penalty = abs(pti - target_pti)
+        if dp_pct is not None:
+            if dp_pct >= 0.24:
+                penalty -= 1e-4 * (n_max - n)  # prefer lebih pendek
+            elif dp_pct < 0.12:
+                penalty -= 1e-4 * (n - n_min)  # prefer lebih panjang
+        cand = (penalty, n, angs, pti)
+        if best is None or cand < best:
+            best = cand
+
+    _, n_sel, angs_sel, pti_sel = best
+
+    if dp_pct is not None and dp_pct >= 0.24:
+        candidates = []
+        for n in range(n_min, n_max + 1):
+            angs = pmt(year_rate/12.0, n, nominal)
+            pti  = angs / gaji
+            if pti_low <= pti <= target_pti:
+                candidates.append((n, angs, pti))
+        if candidates:
+            n_short, angs_short, pti_short = min(candidates, key=lambda t: t[0])
+            return n_short, year_rate, angs_short, pti_short
+
+    return n_sel, year_rate, angs_sel, pti_sel
+
+# ============== MEMBERSHIP ==============
+# PTI = Angsuran/Gaji (0..1.5)
+def mu_pti(x):
+    x = clamp(x, 0, 1.5)
+    return {
+        "VeryLow": trap(x, 0.00, 0.00, 0.18, 0.25),  # ≤ 25%
+        "Low":     tri(x, 0.22, 0.28, 0.33),        # 25–33%
+        "Medium":  tri(x, 0.30, 0.40, 0.50),        # 33–50%
+        "High":    trap(x, 0.45, 0.60, 1.50, 1.50), # > 50%
+    }
+
+# CLI = CicilanLain/Gaji (0..0.6)
+def mu_cli(x):
+    x = clamp(x, 0, 0.6)
+    return {
+        "Low":    trap(x, 0.00, 0.00, 0.10, 0.15),
+        "Medium": tri(x, 0.10, 0.20, 0.30),
+        "High":   trap(x, 0.20, 0.30, 0.60, 0.60),
+    }
+
+# DP% = dp/nominal (0..1). Jika tak ada → Medium (netral)
+def mu_dp(dp_pct):
+    if dp_pct is None:
+        return {"Low": 0.0, "Medium": 1.0, "High": 0.0}
+    x = clamp(dp_pct, 0, 1)
+    return {
+        "Low":    trap(x, 0.00, 0.00, 0.12, 0.16),
+        "Medium": tri(x, 0.12, 0.20, 0.30),
+        "High":   trap(x, 0.24, 0.35, 1.00, 1.00),
+    }
+
+# ============== ATURAN KERAS ==============
+def aturan_keras(gaji, angsuran):
+    if gaji <= 0: 
+        return False, "Gaji tidak valid."
+    if angsuran <= 0: 
+        return False, "Angsuran tidak valid."
+    if angsuran >= gaji: 
+        return False, "Angsuran ≥ 100% gaji."
+    return True, "OK"
+
+# ============== MAMDANI RULE BASE ==============
+REP = {"Reject": 25, "Consider": 50, "Approve": 85}
+# Akomodasi rule analis: x4 layak, x3 pertimbangan, x2 dipertimbangkan bila tanpa cicilan lain
+RULES = [
+    (("PTI","VeryLow"), (), (), "Approve"),
+
+    (("PTI","Low"), ("CLI","Low"), (), "Approve"),
+    (("PTI","Low"), ("DP","High"), (), "Approve"),
+
+    (("PTI","Medium"), ("CLI","Low"), ("DP","High"), "Approve"),
+    (("PTI","Medium"), ("CLI","Low"), (), "Consider"),
+    (("PTI","Medium"), ("CLI","Medium"), (), "Consider"),
+    (("PTI","Medium"), ("CLI","High"), (), "Reject"),
+
+    (("PTI","High"), ("CLI","Low"), (), "Consider"),  # x2 kalau CLI rendah/0
+    (("PTI","High"), ("CLI","Medium"), (), "Reject"),
+    (("PTI","High"), ("CLI","High"), (), "Reject"),
+
+    (("DP","Low"), ("CLI","High"), (), "Reject"),
+    (("DP","High"), ("CLI","Low"), (), "Consider"),
+]
+
+def fuzzy_infer(pti, cli, dp_pct):
+    muP, muC, muD = mu_pti(pti), mu_cli(cli), mu_dp(dp_pct)
+    num = den = 0.0
+    fired = []
+    for a, b, c, out in RULES:
+        mu_a = muP[a[1]] if a else 1.0
+        mu_b = muC[b[1]] if b else 1.0
+        mu_c = muD[c[1]] if c else 1.0
+        strength = min(mu_a, mu_b, mu_c)
+        if strength > 0:
+            num += strength * REP[out]
+            den += strength
+            fired.append({"rule": f"{a}&{b}&{c}->{out}", "strength": round(strength, 3), "output": out})
+    score = num / den if den > 0 else 0.0
+    label = "Approve" if score >= 60 else ("Consider" if score >= 40 else "Reject")
+    return score, label, fired
 
 PENJELASAN_STATUS = {
-    "LAYAK": ["Pendapatan memadai.", "Jenis pekerjaan dan cicilan sesuai."],
-    "DI PERTIMBANGKAN": ["Data perlu tinjauan lebih lanjut.", "Beberapa indikator belum optimal."],
-    "TIDAK LAYAK": ["Pendapatan atau pekerjaan kurang mendukung.", "Beban cicilan terlalu tinggi."],
-    "DITOLAK": ["Gagal lolos syarat dasar (aturan keras)."]
+    "Approve":  ["PTI rendah.", "Beban cicilan lain terkendali.", "DP mendukung."],
+    "Consider": ["Sebagian indikator cukup.", "Pertimbangkan tambah DP atau kecilkan nominal."],
+    "Reject":   ["PTI/CLI tinggi.", "DP rendah atau penghasilan belum mencukupi."],
 }
+def risiko(score): 
+    return "RENDAH" if score >= 70 else ("SEDANG" if score >= 55 else "TINGGI")
 
-# ===================== UTILITAS =====================
-def normalisasi_pekerjaan(teks):
-    teks = teks.lower().strip()
-    semua_alias = [s for lst in PEKERJAAN_ALIAS.values() for s in lst]
-    tfidf = TfidfVectorizer().fit(semua_alias + [teks])
-    v_teks = tfidf.transform([teks])
-    return max(PEKERJAAN_ALIAS, key=lambda label: cosine_similarity(v_teks, tfidf.transform(PEKERJAAN_ALIAS[label])).max())
+# ============== EVALUASI TANPA INPUT TENOR ==============
+def evaluasi_akhir(raw):
+    # Ambil input
+    gaji         = float(raw.get("gaji", 0) or 0)
+    cicilan_lain = float(raw.get("cicilan_lain", raw.get("installment", 0)) or 0)
+    nominal_in   = float(raw.get("pengajuan_baru", raw.get("nominal", 0)) or 0)
+    dp           = float(raw.get("dp", 0) or 0)
+    item_label   = raw.get("jenis_pengajuan", raw.get("item", ""))  # "Motor Bekas", dll
+    tenor_hint   = raw.get("tenor")  # opsional, tetap divalidasi bila ada
+    margin_hint  = raw.get("margin_tahunan")  # opsional
 
-def konversi_uang(teks):
-    if pd.isnull(teks): return 0
-    teks = str(teks).lower().replace("rp", "").replace(" ", "").replace(".", "").replace(",", ".")
-    matches = re.findall(r"(\d+\.?\d*)\s*(k|rb|ribu|jt|juta|m|miliar|b)?", teks)
-    satuan_map = {"k":1e3, "rb":1e3, "ribu":1e3, "jt":1e6, "juta":1e6, "m":1e6, "miliar":1e9, "b":1e9}
-    return int(sum(float(n) * satuan_map.get(s, 1) for n, s in matches))
+    # DP% & nominal
+    nominal = infer_nominal(dp, nominal_in, asumsi_dp_pct=0.20)
+    dp_pct = (dp / nominal) if (dp > 0 and nominal > 0) else None
 
-def rekomendasi_tenor(gaji, plafon):
-    if gaji <= 0 or plafon <= 0: return 12
-    ratio = plafon / gaji
-    # Membership function
-    gr = lambda g: max(0, min(1, (6_000_000 - g)/3_000_000)) if g <= 6_000_000 else max(0, min(1, (g - 6_000_000)/3_000_000))
-    rr = lambda r: max(0, min(1, (0.4 - r)/0.2)) if r <= 0.4 else max(0, min(1, (r - 0.4)/0.2))
-    rules = [(min(gr(gaji), rr(ratio)), t) for gr, rr, t in [
-        (lambda g: 1, lambda r: 1, 36), (lambda g: 1, lambda r: 0.5, 30), (lambda g: 1, lambda r: 0, 24),
-        (lambda g: 0.5, lambda r: 1, 30), (lambda g: 0.5, lambda r: 0.5, 24), (lambda g: 0.5, lambda r: 0, 18),
-        (lambda g: 0, lambda r: 1, 24), (lambda g: 0, lambda r: 0.5, 18), (lambda g: 0, lambda r: 0, 12)]
-    ]
-    n, d = sum(w * t for w, t in rules), sum(w for w, _ in rules)
-    return min([12, 18, 24, 30, 36], key=lambda x: abs(x - n / d)) if d != 0 else 12
+    # Jika angsuran tidak dikirim, pilih tenor & hitung angsuran otomatis
+    angsuran_in = float(raw.get("angsuran", 0) or 0)
+    if angsuran_in > 0:
+        angsuran = angsuran_in
+        tenor_used = int(tenor_hint) if tenor_hint else None
+        margin_used = float(margin_hint) if margin_hint else None
+    else:
+        tenor_used, margin_used, angsuran, _pti_est = choose_tenor_and_installment(
+            gaji=gaji,
+            nominal=nominal,
+            item_label=item_label,
+            dp_pct=dp_pct,
+            tenor_hint=tenor_hint,
+            margin_tahunan=margin_hint,
+            target_pti=0.33,
+            pti_low=0.25,
+            pti_high=0.50
+        )
 
-def aturan_keras(data):
-    if data["pekerjaan"] == "wiraswasta" and data["gaji"] == 0:
-        return True, "Wiraswasta tanpa penghasilan tetap."
-    if data["jenis_pengajuan"] == "mobil" and data["gaji"] < 10_000_000 and data["cicilan_lain"] > 0:
-        return False, "Gaji <10jt dan ada cicilan lain."
-    if (data["pengajuan_baru"] / data["tenor"]) > 0.3 * data["gaji"]:
-        return False, "Angsuran melebihi 30% dari gaji."
-    return True, "Lolos aturan keras."
+    # Knock-out checks
+    ok, alasan = aturan_keras(gaji, angsuran)
+    if not ok:
+        return {
+            "status": "Reject",
+            "risiko": "TINGGI",
+            "alasan": [alasan],
+            "saran": "Perbaiki input / kecilkan nominal / tambah DP.",
+            "score": 0,
+            "detail": {
+                "pti": None, "cli": None, "dp_pct": dp_pct,
+                "tenor": tenor_used, "margin_tahun": margin_used,
+                "angsuran": round(angsuran)
+            },
+            "fired_rules": []
+        }
 
-def skor_fuzzy(data):
-    skor = 10 if data["gaji"] < 3_000_000 else 20 if data["gaji"] < 5_000_000 else 25 if data["gaji"] < 7_000_000 else 30 if data["gaji"] < 10_000_000 else 35
-    if data["jenis_pengajuan"] == "mobil":
-        if data["cicilan_lain"] > 0: skor += 5 if data["gaji"] > 10_000_000 else -10
-        else: skor += 10 if data["gaji"] > 10_000_000 else 5 if data["gaji"] == 10_000_000 else -10
-    skor += {"pns":30, "karyawan":25, "profesional":20, "wiraswasta":15, "freelancer":15, "driver":10, "buruh":10}.get(data["pekerjaan"], 10)
-    skor += 20 if data["cicilan_lain"] == 0 else 10 if data["cicilan_lain"] < 0.2 * data["gaji"] else 0
-    skor += 20 if data["pengajuan_baru"] <= 0.3 * data["gaji"] else 10 if data["pengajuan_baru"] <= 0.5 * data["gaji"] else 0
-    return skor
+    # Rasio inti
+    pti = angsuran / gaji if gaji > 0 else 10.0
+    cli = cicilan_lain / gaji if gaji > 0 else 10.0
 
-def evaluasi_akhir(data):
-    for k in ["gaji", "cicilan_lain", "pengajuan_baru"]:
-        data[k] = konversi_uang(data.get(k, 0)) if isinstance(data[k], str) else data[k]
-    data["pekerjaan"] = normalisasi_pekerjaan(data["pekerjaan"])
-    data["tenor"] = data.get("tenor") or rekomendasi_tenor(data["gaji"], data["pengajuan_baru"])
-    angsuran = data["pengajuan_baru"] / data["tenor"]
-    data["angsuran"] = int(angsuran)
-    data["rasio_angsuran"] = round(angsuran / data["gaji"], 2)
-    lolos, _ = aturan_keras(data)
-    if data["pekerjaan"] == "wiraswasta" and data["gaji"] == 0 and lolos:
-        return {"status": "DI PERTIMBANGKAN", "skor_fuzzy": 50, "risiko": "SEDANG", "saran": "Perlu survey lapangan.", "input": data}
-    if not lolos:
-        return {"status": "DITOLAK", "skor_fuzzy": 0, "risiko": "TINGGI", "saran": "Tidak memenuhi aturan keras.", "input": data}
-    skor = skor_fuzzy(data)
-    status = "LAYAK" if skor >= 70 else "DI PERTIMBANGKAN" if skor >= 50 else "TIDAK LAYAK"
-    return {"status": status, "skor_fuzzy": skor, "risiko": "RENDAH" if skor >= 75 else "SEDANG" if skor >= 55 else "TINGGI", "saran": "Validasi tambahan diperlukan." if status != "LAYAK" else None, "input": data}
+    # Fuzzy infer
+    score, label, fired = fuzzy_infer(pti, cli, dp_pct)
 
-# ===================== ENDPOINT =====================
+    # Catatan singkat PTI
+    note = "PTI aman" if pti <= 0.33 else ("PTI sedang" if pti <= 0.5 else "PTI tinggi")
+
+    return {
+        "status": label,
+        "risiko": risiko(score),
+        "alasan": PENJELASAN_STATUS[label],
+        "saran": note,
+        "score": round(score, 2),
+        "detail": {
+            "pti": round(pti, 4), "cli": round(cli, 4),
+            "dp_pct": round(dp_pct, 4) if dp_pct is not None else None,
+            "tenor": tenor_used, "margin_tahun": margin_used,
+            "angsuran": round(angsuran)
+        },
+        "fired_rules": fired[:5]
+    }
+
+# ============== API ==============
 @app.route("/")
-def home(): return "API aktif."
+def home():
+    return "API fuzzy kelayakan (tenor otomatis) berjalan."
 
 @app.route("/prediksi", methods=["POST"])
 def prediksi():
-    data = request.form.to_dict()
-    data["jenis_pengajuan"] = data.get("item", "").lower()
-    return jsonify(evaluasi_akhir(data))
+    try:
+        payload = request.get_json(silent=True) or request.form.to_dict()
+        return jsonify(evaluasi_akhir(payload))
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
-@app.route("/run_fuzzy")
+@app.route("/run_fuzzy", methods=["GET"])
 def run_fuzzy():
-    data = db.reference("orders").get()
-    if not data: return jsonify({"message": "No new data."})
+    data = db.reference("orders").get() or {}
     processed = 0
-    for doc_id, record in data.items():
-        if record.get("status") in ["processed", "cancel", "process"]: continue
-        record.update({
-            "gaji": record.get("income", 0),
-            "cicilan_lain": record.get("installment", 0),
-            "pengajuan_baru": record.get("nominal", 0),
-            "pekerjaan": record.get("job", ""),
-            "jenis_pengajuan": record.get("item", ""),
-            "tenor": rekomendasi_tenor(konversi_uang(record.get("income", 0)), konversi_uang(record.get("nominal", 0)))
-        })
-        hasil = evaluasi_akhir(record)
-        hasil["timestamp"] = datetime.utcnow().isoformat()
-        hasil["agent"] = {"email": record.get("agentEmail"), "nama": record.get("agentName"), "telepon": record.get("agentPhone")}
+    for doc_id, r in data.items():
+        status = str(r.get("status", "")).lower()
+        if status in ["processed", "cancel", "process"]:
+            continue
+        payload = {
+            "gaji": r.get("income", 0),
+            "cicilan_lain": r.get("installment", 0),
+            "pengajuan_baru": r.get("nominal", 0),
+            "dp": r.get("dp", 0),
+            "item": r.get("item", ""),           # "Motor Bekas", dll
+            "tenor": r.get("tenor"),             # opsional
+            "margin_tahunan": r.get("margin_tahunan"),  # opsional
+            "angsuran": r.get("angsuran", 0),    # jika ada, dipakai langsung
+        }
+        hasil = evaluasi_akhir(payload)
+        hasil["agent"] = {
+            "email": r.get("agentEmail"),
+            "nama": r.get("agentName"),
+            "telepon": r.get("agentPhone")
+        }
         firestore_client.collection("hasil_prediksi").document(doc_id).set(hasil)
         processed += 1
     return jsonify({"message": f"Processed {processed} records."})
 
-@app.route("/ping")
-def ping(): return jsonify({"message": "pong"})
+@app.route("/ping", methods=["GET"])
+def ping():
+    return jsonify({"message": "pong", "status": "ok"})
 
-@app.route("/warmup")
+@app.route("/warmup", methods=["GET"])
 def warmup():
     try:
-        firestore_client.collection("hasil_prediksi").limit(1).get()
-        return jsonify({"status": "warm"})
+        _ = firestore_client.collection("hasil_prediksi").limit(1).get()
+        return jsonify({"status": "warm"}), 200
     except Exception as e:
-        return jsonify({"status": "error", "detail": str(e)})
+        return jsonify({"status": "error", "detail": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(debug=True)
