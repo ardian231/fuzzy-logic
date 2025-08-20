@@ -143,7 +143,7 @@ class FuzzyLogicCredit:
         status = self._status_from_threshold(s)
         risiko = self._risk_level(s)
         saran = ("Profil aman. Angsuran wajar terhadap gaji." if status == "LAYAK"
-                 else "Perlu verifikasi lapangan/dokumen. Pertimbangkan nominal/DP." if status == "DI PERTIMBANGKAN"
+                 else "Perlu verifikasi lapangan/dokumen. Pertimbangkan nominal." if status == "DI PERTIMBANGKAN"
                  else "Turunkan nominal pengajuan atau selesaikan cicilan lain.")
         pred = 1 if s >= self.threshold else 0
         return {
@@ -153,7 +153,7 @@ class FuzzyLogicCredit:
         }
 
 PENJELASAN_STATUS = {
-    "LAYAK": ["Pendapatan memadai.", "Jenis pekerjaan dan cicilan sesuai."],
+    "LAYAK": ["Pendapatan memadai.", "Beban cicilan terkendali"],
     "DI PERTIMBANGKAN": ["Data perlu tinjauan lebih lanjut.", "Beberapa indikator belum optimal."],
     "TIDAK LAYAK": ["Pendapatan kurang mendukung.", "Beban cicilan terlalu tinggi."],
 }
